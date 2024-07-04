@@ -60,7 +60,7 @@ class CustomerSchema(ma.Schema):
 
     class Meta:
         # fields that are displayed (Exposed)
-        fields = ("name", "email", "phone")
+        fields = ("name", "email", "phone", "customer_id")
 
 # instantiate our schemas
 customer_schema = CustomerSchema() #schema for one single object creating(POST), updating(PUT),retrieving(GET) a single customer
@@ -176,6 +176,251 @@ def add_customer():
             cursor.close()
             conn.close()
 
+# Update a customer - PUT - total replacement of resource
+# PATCH - partial replacement 
+@app.route('/customers/<int:id>', methods = ["PUT"]) #int:id , -id should be an integer
+def update_customer(id):
+    try: 
+        # validate in the incoming data with the customer_schema
+        customer_data = customer_schema.load(request.json)
+        print(customer_data)
+    except ValidationError as e:
+        print(f"Error: {e}")
+        return jsonify(e.messages), 400
+    
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"error": "Database Connection Failed"}), 500
+        
+        cursor = conn.cursor()
+
+        # updated custome details
+        name = customer_data['name']
+        email = customer_data['email']
+        phone = customer_data['phone']
+        #                                       id parameter that we use to find the customer to updates
+        updated_customer = (name, email, phone, id)
+
+        # SQL query to update
+        query = "UPDATE Customers SET name = %s, email = %s, phone = %s WHERE customer_id = %s"
+
+        # Executing the query
+        cursor.execute(query, updated_customer)
+        conn.commit()
+
+        # nice message about the user being updated
+        return jsonify({"message": "Customer details updated successfully"}), 200
+    
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+# DELETE Customer
+@app.route('/customers/<int:id>', methods = ["DELETE"])
+def delete_customer(id):
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"message": "Database connection failed"}), 500
+        cursor = conn.cursor()
+        customer_to_remove = (id,)
+
+        # query to check to check if the customer exists
+        query = "SELECT * FROM Customers WHERE customer_id = %s"
+        cursor.execute(query, customer_to_remove)
+        customer = cursor.fetchone()
+        print(customer)
+        if not customer:
+            return jsonify({"message": "Customer not found"}), 404
+        
+        # query to check if the customer has associated orders
+        query = "SELECT * FROM Orders WHERE customer_id = %s"
+        cursor.execute(query, customer_to_remove)
+        # store orders associated with the customer id, if there are any
+        customer_orders = cursor.fetchall()
+
+        if customer_orders:
+            return jsonify({"message": "Cannot delete customer with associated orders. "}), 403 #FORBID the user from deleting a customer with orders
+        
+        # finally deleting our customer RIP
+        query = "DELETE FROM Customers WHERE customer_id = %s"
+        cursor.execute(query, customer_to_remove)
+        conn.commit()
+
+        # return a successful message for deleting a customer
+        return jsonify({"message": "Customer removed successfully"}), 200
+
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+# ============================================ SCHEMA AND ROUTES FOR ORDERS ================================================
+
+# create the Order Schema
+# creates a shape for an incoming order object to adhere to
+class OrderSchema(ma.Schema):
+    order_id = fields.Int(dump_only=True) # only for displaying (exposing)
+    customer_id = fields.Int(required=True)
+    date = fields.Date(required=True)
+
+    class Meta:
+
+        fields = ("order_id", "customer_id", "date")
+
+# Initialize our schemas
+order_schema = OrderSchema()
+orders_schema = OrderSchema(many=True)
+
+@app.route("/orders", methods=["GET"])
+def get_orders():
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"message": "Database connection failed"}), 500
+        
+        cursor = conn.cursor(dictionary=True)
+        query = "SELECT * FROM Orders"
+        cursor.execute(query)
+
+        orders = cursor.fetchall()
+        example = cursor.fetchone()
+        print(example, "EXAMPLE OF FETCHONE")
+        
+        return orders_schema.jsonify(orders) #serializes the list of dictionaries into the JSON text format
+
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+@app.route("/orders", methods = ["POST"])
+def add_order():
+
+    try:
+        # validate with the order schema
+        order_data = order_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify(e.messages), 400
+
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"message": "Database connection failed"}), 500
+        
+        cursor = conn.cursor()
+
+        query = "INSERT INTO Orders (date, customer_id) VALUES (%s, %s)"
+        new_order = (order_data['date'], order_data['customer_id'])
+        cursor.execute(query, new_order)
+        conn.commit()
+
+        return jsonify({"message": "Order added successfully"}), 201
+        
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+    
+
+@app.route("/orders/<int:order_id>", methods=["PUT"])
+def update_order(order_id):
+    try:
+        # validate with the order schema
+        order_data = order_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify(e.messages), 400
+
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"message": "Database connection failed"}), 500
+        
+        cursor = conn.cursor()
+        query = "UPDATE Orders SET date = %s, customer_id = %s WHERE order_id = %s"
+        
+        update_order = (order_data['date'], order_data['customer_id'], order_id)
+
+        cursor.execute(query, update_order)
+        conn.commit()
+
+        return jsonify({"message": "Order was successfully updated!"}), 200
+
+
+
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+
+@app.route('/orders/<int:order_id>', methods = ["DELETE"])
+def delete_order(order_id):
+    try:
+        conn = connect_db()
+        if conn is None:
+            return jsonify({"message": "Database connection failed"}), 500
+        cursor = conn.cursor()
+        order_to_remove = (order_id,)
+
+        # Check if the order exists before we try to delete
+        query = "SELECT * FROM Orders WHERE order_id = %s"
+        cursor.execute(query, order_to_remove)
+
+        # saving potential results to a variable
+        order = cursor.fetchone()
+        print(order, "example of fetchone")
+        if not order: #checking that order is None
+            return jsonify({"message": "Order does not exist"}), 404
+        
+        query = "DELETE FROM Orders WHERE order_id = %s"
+        cursor.execute(query, order_to_remove)
+        conn.commit()
+
+        return jsonify({"message": "Order deleted successfully!"})
+
+    
+
+    except Error as e:
+        print(f"Error: {e}")
+        return jsonify({"error": "Internal Server Error"}), 500
+    
+    finally:
+        # closing connections
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+
+
+    
 
 
 
